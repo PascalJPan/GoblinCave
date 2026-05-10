@@ -322,7 +322,7 @@ export default function Dashboard() {
       </div>
 
       <div className="mobile-tab-bar">
-        {(['person1', 'person2']).map(p => (
+        {persons && (['person1', 'person2']).map(p => (
           <button key={p} className={`mobile-tab ${mobileTab === p ? 'active' : ''}`}
             onClick={() => switchTab(p)}>
             {persons[p].toUpperCase()}

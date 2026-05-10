@@ -44,6 +44,7 @@ export default function CloudModal({ instance, onClose, onComplete }) {
     onComplete?.(instance.id, person, x, y)
   }
 
+  if (!persons) return null
   const parts = parseDescription(instance.chore_description)
   const lastDays = instance.last_completed_at ? fmtDuration(daysSince(instance.last_completed_at)) : null
 
