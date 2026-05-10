@@ -1,6 +1,8 @@
 import { useState } from 'react'
+import { usePersons } from '../context/PersonContext'
 
 export default function Character({ name, onDrop }) {
+  const persons = usePersons()
   const [over, setOver] = useState(false)
   const [eating, setEating] = useState(false)
 
@@ -35,7 +37,7 @@ export default function Character({ name, onDrop }) {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {eating ? `NOM NOM` : name.toUpperCase()}
+      {eating ? `NOM NOM` : (persons?.[name] || name).toUpperCase()}
     </div>
   )
 }
