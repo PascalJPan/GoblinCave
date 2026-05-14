@@ -124,9 +124,16 @@ def update_chore(chore_id: int, body: ChoreUpdate, db=Depends(get_db), _=Depends
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         db.execute(f"UPDATE chores SET {set_clause} WHERE id = ?", list(updates.values()) + [chore_id])
     if slots is not None:
-        # Delete instances before slots (FK constraint)
         db.execute("DELETE FROM chore_instances WHERE chore_id = ? AND status = 'pending'", (chore_id,))
-        db.execute("DELETE FROM chore_slots WHERE chore_id = ?", (chore_id,))
+        # Only delete slots with no done instances — slots with history must stay to preserve FK refs
+        db.execute("""
+            DELETE FROM chore_slots
+            WHERE chore_id = ?
+            AND id NOT IN (
+                SELECT DISTINCT slot_id FROM chore_instances
+                WHERE chore_id = ? AND status = 'done'
+            )
+        """, (chore_id, chore_id))
         _insert_slots(db, chore_id, slots)
     db.commit()
     row = db.execute("SELECT * FROM chores WHERE id = ?", (chore_id,)).fetchone()
