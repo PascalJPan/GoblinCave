@@ -197,7 +197,7 @@ def _fetch(conn, slot_id: int, due: date) -> dict | None:
 def generate_all_for_chore(conn, chore: dict) -> list[dict]:
     """Returns all instances that should appear on the dashboard for this chore."""
     slots = conn.execute(
-        "SELECT * FROM chore_slots WHERE chore_id = ?",
+        "SELECT * FROM chore_slots WHERE chore_id = ? AND is_active = 1",
         (chore['id'],)
     ).fetchall()
     slots = [dict(s) for s in slots]
@@ -225,7 +225,7 @@ def peek_next_due(conn, chore: dict) -> tuple | None:
     computing from the schedule even if no DB instance exists yet.
     """
     slots = [dict(s) for s in conn.execute(
-        "SELECT * FROM chore_slots WHERE chore_id = ?", (chore['id'],)
+        "SELECT * FROM chore_slots WHERE chore_id = ? AND is_active = 1", (chore['id'],)
     ).fetchall()]
     if not slots:
         return None
@@ -268,7 +268,7 @@ def peek_next_due(conn, chore: dict) -> tuple | None:
 def generate_next_after_completion(conn, chore: dict, slot_id: int, last_instance: dict):
     """Called after a completion to eagerly generate the next instance."""
     slots = [dict(s) for s in conn.execute(
-        "SELECT * FROM chore_slots WHERE chore_id = ?", (chore['id'],)
+        "SELECT * FROM chore_slots WHERE chore_id = ? AND is_active = 1", (chore['id'],)
     ).fetchall()]
 
     if chore['schedule_type'] == 'weekly' and slots:

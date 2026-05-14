@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS chore_slots (
     row_index INTEGER NOT NULL DEFAULT 0,
     day_spec TEXT NOT NULL,
     assignee TEXT NOT NULL CHECK(assignee IN ('person1','person2','alternating','together')),
-    alt_start TEXT NOT NULL DEFAULT 'person1'
+    alt_start TEXT NOT NULL DEFAULT 'person1',
+    is_active INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS config (

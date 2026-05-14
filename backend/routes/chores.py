@@ -47,7 +47,7 @@ def _chore_with_timing(db, row) -> dict:
     chore_id = d['id']
 
     slots = db.execute(
-        "SELECT * FROM chore_slots WHERE chore_id = ?", (chore_id,)
+        "SELECT * FROM chore_slots WHERE chore_id = ? AND is_active = 1", (chore_id,)
     ).fetchall()
     d['slots'] = [dict(s) for s in slots]
 
@@ -125,15 +125,21 @@ def update_chore(chore_id: int, body: ChoreUpdate, db=Depends(get_db), _=Depends
         db.execute(f"UPDATE chores SET {set_clause} WHERE id = ?", list(updates.values()) + [chore_id])
     if slots is not None:
         db.execute("DELETE FROM chore_instances WHERE chore_id = ? AND status = 'pending'", (chore_id,))
-        # Only delete slots with no done instances — slots with history must stay to preserve FK refs
+        # Slots with done instances: retire (hide) rather than delete to preserve FK refs
         db.execute("""
-            DELETE FROM chore_slots
+            UPDATE chore_slots SET is_active = 0
             WHERE chore_id = ?
-            AND id NOT IN (
+            AND id IN (
                 SELECT DISTINCT slot_id FROM chore_instances
                 WHERE chore_id = ? AND status = 'done'
             )
         """, (chore_id, chore_id))
+        # Slots with no history can be fully deleted
+        db.execute("""
+            DELETE FROM chore_slots
+            WHERE chore_id = ?
+            AND is_active = 1
+        """, (chore_id,))
         _insert_slots(db, chore_id, slots)
     db.commit()
     row = db.execute("SELECT * FROM chores WHERE id = ?", (chore_id,)).fetchone()
