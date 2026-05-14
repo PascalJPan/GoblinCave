@@ -125,22 +125,42 @@ def update_chore(chore_id: int, body: ChoreUpdate, db=Depends(get_db), _=Depends
         db.execute(f"UPDATE chores SET {set_clause} WHERE id = ?", list(updates.values()) + [chore_id])
     if slots is not None:
         db.execute("DELETE FROM chore_instances WHERE chore_id = ? AND status = 'pending'", (chore_id,))
-        # Slots with done instances: retire (hide) rather than delete to preserve FK refs
-        db.execute("""
-            UPDATE chore_slots SET is_active = 0
-            WHERE chore_id = ?
-            AND id IN (
-                SELECT DISTINCT slot_id FROM chore_instances
-                WHERE chore_id = ? AND status = 'done'
-            )
-        """, (chore_id, chore_id))
-        # Slots with no history can be fully deleted
-        db.execute("""
-            DELETE FROM chore_slots
-            WHERE chore_id = ?
-            AND is_active = 1
-        """, (chore_id,))
-        _insert_slots(db, chore_id, slots)
+
+        existing = {
+            (r['row_index'], r['day_spec']): dict(r)
+            for r in db.execute(
+                "SELECT * FROM chore_slots WHERE chore_id = ? AND is_active = 1", (chore_id,)
+            ).fetchall()
+        }
+        new_keys = {(s.row_index, s.day_spec) for s in slots}
+
+        # Remove slots that are no longer in the new schedule
+        for key, slot in existing.items():
+            if key not in new_keys:
+                has_history = db.execute(
+                    "SELECT 1 FROM chore_instances WHERE slot_id = ? AND status = 'done' LIMIT 1",
+                    (slot['id'],)
+                ).fetchone()
+                if has_history:
+                    db.execute("UPDATE chore_slots SET is_active = 0 WHERE id = ?", (slot['id'],))
+                else:
+                    db.execute("DELETE FROM chore_slots WHERE id = ?", (slot['id'],))
+
+        # Update kept slots if assignee changed; insert only genuinely new slots
+        for s in slots:
+            key = (s.row_index, s.day_spec)
+            if key in existing:
+                ex = existing[key]
+                if ex['assignee'] != s.assignee or ex['alt_start'] != s.alt_start:
+                    db.execute(
+                        "UPDATE chore_slots SET assignee=?, alt_start=? WHERE id=?",
+                        (s.assignee, s.alt_start, ex['id'])
+                    )
+            else:
+                db.execute(
+                    "INSERT INTO chore_slots (chore_id, row_index, day_spec, assignee, alt_start) VALUES (?,?,?,?,?)",
+                    (chore_id, s.row_index, s.day_spec, s.assignee, s.alt_start)
+                )
     db.commit()
     row = db.execute("SELECT * FROM chores WHERE id = ?", (chore_id,)).fetchone()
     return _chore_with_timing(db, row)
