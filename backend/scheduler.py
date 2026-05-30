@@ -104,10 +104,13 @@ def resolve_assignee(slot: dict, last_instance: dict | None) -> str:
         return 'together'
     if assignee in ('person1', 'person2'):
         return assignee
-    # alternating
+    # alternating: flip based on who actually did it; 'together' counts as the assigned person fulfilling their turn
     if last_instance is None:
         return slot['alt_start']
-    return flip(last_instance['assigned_to'])
+    doer = last_instance.get('completed_by')
+    if doer not in ('person1', 'person2'):
+        doer = last_instance['assigned_to']
+    return flip(doer)
 
 
 # ── Core generation ───────────────────────────────────────────────────────────
@@ -140,6 +143,21 @@ def _compute_next_due(chore: dict, slot: dict, last_due: date) -> date:
     raise ValueError(f"Unknown schedule_type: {stype}")
 
 
+def _completion_date(instance: dict) -> date:
+    ca = instance.get('completed_at')
+    if ca:
+        return date.fromisoformat(ca[:10])
+    return date.fromisoformat(instance['due_date'])
+
+
+def _next_due_strictly_after(chore: dict, slot: dict, last_due: date, after: date) -> date:
+    # Skip over missed cycles instead of backfilling overdue instances.
+    nd = _compute_next_due(chore, slot, last_due)
+    while nd <= after:
+        nd = _compute_next_due(chore, slot, nd)
+    return nd
+
+
 def generate_for_slot(conn, chore: dict, slot: dict) -> dict | None:
     """
     Ensure the slot has an up-to-date instance. Returns the instance to show
@@ -170,7 +188,8 @@ def generate_for_slot(conn, chore: dict, slot: dict) -> dict | None:
         return None
 
     # Latest is done — compute next
-    next_due = _compute_next_due(chore, slot, last_due)
+    completed = _completion_date(latest)
+    next_due = _next_due_strictly_after(chore, slot, last_due, max(last_due, completed))
     if next_due <= today:
         assigned = resolve_assignee(slot, latest)
         _upsert_instance(conn, chore['id'], slot_id, next_due, assigned)
@@ -253,7 +272,8 @@ def peek_next_due(conn, chore: dict) -> tuple | None:
             assignee = latest['assigned_to']
         else:
             last_due = date.fromisoformat(latest['due_date'])
-            due = _compute_next_due(chore, slot, last_due)
+            completed = _completion_date(latest)
+            due = _next_due_strictly_after(chore, slot, last_due, max(last_due, completed))
             assignee = resolve_assignee(slot, latest)
 
         candidates.append((due, assignee))
@@ -282,7 +302,8 @@ def generate_next_after_completion(conn, chore: dict, slot_id: int, last_instanc
     slot['_cycle_length'] = cycle_length
 
     last_due = date.fromisoformat(last_instance['due_date'])
-    next_due = _compute_next_due(chore, slot, last_due)
+    completed = _completion_date(last_instance)
+    next_due = _next_due_strictly_after(chore, slot, last_due, max(last_due, completed))
     today = date.today()
     if next_due <= today:
         assigned = resolve_assignee(slot, last_instance)
