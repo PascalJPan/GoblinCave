@@ -11,7 +11,7 @@ from scheduler import (
     _prep_slots_for_chore,
     _compute_first_due,
     _next_due_strictly_after,
-    resolve_assignee,
+    _resolve_assignee_chorewide,
 )
 
 router = APIRouter(prefix="/chores", tags=["chores"])
@@ -179,7 +179,7 @@ def _consume_next_as_early(db, chore_id: int, completed_by: str, completed_at_da
         latest = dict(latest) if latest else None
         if latest is None:
             due = _compute_first_due(chore, slot)
-            assignee = resolve_assignee(slot, None)
+            assignee = _resolve_assignee_chorewide(db, chore_id, slot, None, due)
         elif latest['status'] == 'pending':
             due = date.fromisoformat(latest['due_date'])
             assignee = latest['assigned_to']
@@ -187,7 +187,7 @@ def _consume_next_as_early(db, chore_id: int, completed_by: str, completed_at_da
             last_due = date.fromisoformat(latest['due_date'])
             completed = date.fromisoformat((latest['completed_at'] or latest['due_date'])[:10])
             due = _next_due_strictly_after(chore, slot, last_due, max(last_due, completed))
-            assignee = resolve_assignee(slot, latest)
+            assignee = _resolve_assignee_chorewide(db, chore_id, slot, latest, due)
         candidates.append((due, assignee, slot, latest))
     candidates.sort(key=lambda x: x[0])
     chosen_due, chosen_assignee, chosen_slot, chosen_latest = candidates[0]

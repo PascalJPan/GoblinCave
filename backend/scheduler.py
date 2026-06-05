@@ -102,6 +102,9 @@ def flip(person: str) -> str:
 
 
 def resolve_assignee(slot: dict, last_instance: dict | None) -> str:
+    """For alternating slots, `last_instance` should be the chore-wide latest alternating
+    predecessor (see `_chore_alt_predecessor`), not the per-slot latest — alternation is
+    shared across all alternating slots of the same chore."""
     assignee = slot['assignee']
     if assignee == 'together':
         return 'together'
@@ -116,20 +119,48 @@ def resolve_assignee(slot: dict, last_instance: dict | None) -> str:
     return flip(doer)
 
 
+def _chore_alt_predecessor(conn, chore_id: int, before_due: date | None = None) -> dict | None:
+    """Return the most recent (regular, non-extra) instance of any alternating slot of this
+    chore, optionally restricted to due_date < `before_due`."""
+    query = """
+        SELECT ci.* FROM chore_instances ci
+        JOIN chore_slots cs ON ci.slot_id = cs.id
+        WHERE cs.chore_id = ? AND cs.assignee = 'alternating' AND ci.kind != 'extra'
+    """
+    params: list = [chore_id]
+    if before_due is not None:
+        query += " AND ci.due_date < ?"
+        params.append(before_due.isoformat())
+    query += " ORDER BY ci.due_date DESC, ci.id DESC LIMIT 1"
+    row = conn.execute(query, params).fetchone()
+    return dict(row) if row else None
+
+
+def _resolve_assignee_chorewide(conn, chore_id: int, slot: dict,
+                                  per_slot_latest: dict | None, my_due: date | None) -> str:
+    """Helper that uses chore-wide predecessor for alternating slots, per-slot for others."""
+    if slot['assignee'] == 'alternating':
+        pred = _chore_alt_predecessor(conn, chore_id, my_due)
+        return resolve_assignee(slot, pred)
+    return resolve_assignee(slot, per_slot_latest)
+
+
 # ── Core generation ───────────────────────────────────────────────────────────
 
 def _compute_first_due(chore: dict, slot: dict) -> date:
     created = date.fromisoformat(chore['created_at'][:10])
+    # Use today as the lower bound so slots added after the chore was created
+    # produce their first instance on the next future cycle, not in the past.
+    ref = max(created, date.today())
     stype = chore['schedule_type']
     pref = chore['preferred_weekday']
 
     if stype == 'weekly':
-        slots_for_chore_query = None  # handled by caller
-        return first_weekly_due(created, slot['row_index'], slot['_cycle_length'], slot['day_spec'])
+        return first_weekly_due(ref, slot['row_index'], slot['_cycle_length'], slot['day_spec'])
     elif stype == 'monthly':
-        return first_monthly_due(created, int(slot['day_spec']), pref)
+        return first_monthly_due(ref, int(slot['day_spec']), pref)
     elif stype == 'yearly':
-        return first_yearly_due(created, slot['day_spec'], pref)
+        return first_yearly_due(ref, slot['day_spec'], pref)
     raise ValueError(f"Unknown schedule_type: {stype}")
 
 
@@ -177,7 +208,7 @@ def generate_for_slot(conn, chore: dict, slot: dict) -> dict | None:
 
     if latest is None:
         due = _compute_first_due(chore, slot)
-        assigned = resolve_assignee(slot, None)
+        assigned = _resolve_assignee_chorewide(conn, chore['id'], slot, None, due)
         _upsert_instance(conn, chore['id'], slot_id, due, assigned)
         if due <= today:
             return _fetch(conn, slot_id, due)
@@ -194,7 +225,7 @@ def generate_for_slot(conn, chore: dict, slot: dict) -> dict | None:
     completed = _completion_date(latest)
     next_due = _next_due_strictly_after(chore, slot, last_due, max(last_due, completed))
     if next_due <= today:
-        assigned = resolve_assignee(slot, latest)
+        assigned = _resolve_assignee_chorewide(conn, chore['id'], slot, latest, next_due)
         _upsert_instance(conn, chore['id'], slot_id, next_due, assigned)
         return _fetch(conn, slot_id, next_due)
     return None
@@ -269,7 +300,7 @@ def peek_next_due(conn, chore: dict) -> tuple | None:
 
         if latest is None:
             due = _compute_first_due(chore, slot)
-            assignee = resolve_assignee(slot, None)
+            assignee = _resolve_assignee_chorewide(conn, chore['id'], slot, None, due)
         elif latest['status'] == 'pending':
             due = date.fromisoformat(latest['due_date'])
             assignee = latest['assigned_to']
@@ -277,7 +308,7 @@ def peek_next_due(conn, chore: dict) -> tuple | None:
             last_due = date.fromisoformat(latest['due_date'])
             completed = _completion_date(latest)
             due = _next_due_strictly_after(chore, slot, last_due, max(last_due, completed))
-            assignee = resolve_assignee(slot, latest)
+            assignee = _resolve_assignee_chorewide(conn, chore['id'], slot, latest, due)
 
         candidates.append((due, assignee))
 
@@ -298,17 +329,19 @@ def _prep_slots_for_chore(chore: dict, slots: list[dict]) -> list[dict]:
     return slots
 
 
-def _candidate_for_slot(slot: dict, state: dict, chore: dict) -> tuple[date, str]:
-    if state['latest_due'] is None:
+def _sim_candidate(slot: dict, slot_state: dict, chore_alt_pred: dict | None,
+                    chore: dict) -> tuple[date, str]:
+    if slot_state['latest_due'] is None:
         due = _compute_first_due(chore, slot)
-        assignee = resolve_assignee(slot, None)
     else:
         due = _next_due_strictly_after(
-            chore, slot, state['latest_due'],
-            max(state['latest_due'], state['latest_done_at'])
+            chore, slot, slot_state['latest_due'],
+            max(slot_state['latest_due'], slot_state['latest_done_at'])
         )
-        prior = {'assigned_to': state['latest_assignee'], 'completed_by': state['latest_done_by']}
-        assignee = resolve_assignee(slot, prior)
+    if slot['assignee'] == 'alternating':
+        assignee = resolve_assignee(slot, chore_alt_pred)
+    else:
+        assignee = resolve_assignee(slot, None)  # fixed slot: ignores history
     return due, assignee
 
 
@@ -317,25 +350,29 @@ def simulate_next_due(chore: dict, slots: list[dict],
     """
     Replay a series of pretend-completions (completed_by, completed_at_date) against the
     soonest-upcoming slot each time, then return the next (due_date, assignee) that would appear.
-    Used for preview and for the create-with-initial-done flow.
+    Alternating slots share a chore-wide flip stream.
     """
     slots = _prep_slots_for_chore(chore, list(slots))
-    states = {s['id']: {'latest_due': None, 'latest_done_by': None,
-                        'latest_done_at': None, 'latest_assignee': None}
-              for s in slots}
+    slot_states = {s['id']: {'latest_due': None, 'latest_done_at': None}
+                    for s in slots}
+    chore_alt_pred: dict | None = None
 
     for completed_by, completed_at in consumed:
-        candidates = [(s, *_candidate_for_slot(s, states[s['id']], chore)) for s in slots]
+        candidates = [(s, *_sim_candidate(s, slot_states[s['id']], chore_alt_pred, chore))
+                      for s in slots]
         candidates.sort(key=lambda x: x[1])
         chosen_slot, chosen_due, chosen_assignee = candidates[0]
-        states[chosen_slot['id']] = {
-            'latest_due': chosen_due,
-            'latest_done_by': completed_by,
-            'latest_done_at': completed_at,
-            'latest_assignee': chosen_assignee,
+        slot_states[chosen_slot['id']] = {
+            'latest_due': chosen_due, 'latest_done_at': completed_at,
         }
+        if chosen_slot['assignee'] == 'alternating':
+            chore_alt_pred = {
+                'assigned_to': chosen_assignee, 'completed_by': completed_by,
+                'due_date': chosen_due.isoformat(),
+                'completed_at': completed_at.isoformat() + 'T00:00:00',
+            }
 
-    candidates = [(_candidate_for_slot(s, states[s['id']], chore)) for s in slots]
+    candidates = [_sim_candidate(s, slot_states[s['id']], chore_alt_pred, chore) for s in slots]
     candidates.sort(key=lambda x: x[0])
     return candidates[0]
 
@@ -361,5 +398,5 @@ def generate_next_after_completion(conn, chore: dict, slot_id: int, last_instanc
     next_due = _next_due_strictly_after(chore, slot, last_due, max(last_due, completed))
     today = date.today()
     if next_due <= today:
-        assigned = resolve_assignee(slot, last_instance)
+        assigned = _resolve_assignee_chorewide(conn, chore['id'], slot, last_instance, next_due)
         _upsert_instance(conn, chore['id'], slot_id, next_due, assigned)

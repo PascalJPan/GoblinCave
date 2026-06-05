@@ -501,7 +501,8 @@ body[data-light-level="0"] .sun-btn:hover {
 .chore-item-name-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .chore-item-name { font-size: 13px; font-weight: 600; }
 .chore-item-divider { color: var(--text-dim); font-size: 13px; }
-.chore-item-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.chore-item-log { display: flex; gap: 6px; flex-shrink: 0; }
+.chore-item-actions { display: flex; gap: 8px; flex-shrink: 0; margin-left: 16px; }
 
 /* ── Chore form ───────────────────────────────────────────────────────────── */
 .form-section {

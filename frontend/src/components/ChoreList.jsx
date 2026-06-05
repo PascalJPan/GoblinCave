@@ -214,11 +214,13 @@ export default function ChoreList() {
                       <span style={{ color: nextColor }}>{nextDays ? `${nextPrefix}${nextDays}` : '—'}</span>
                     </div>
                   </div>
-                  <div className="chore-item-actions">
-                    <button className="btn small" title="Done early (counts as the next scheduled one)"
+                  <div className="chore-item-log">
+                    <button className="btn secondary small" title="Done early (counts as the next scheduled one)"
                       onClick={() => setLogTarget({ chore, mode: 'early' })}>EARLY</button>
                     <button className="btn secondary small" title="Extra log (does not affect the schedule)"
                       onClick={() => setLogTarget({ chore, mode: 'extra' })}>EXTRA</button>
+                  </div>
+                  <div className="chore-item-actions">
                     <button className="btn secondary small" onClick={() => navigate(`/chores/${chore.id}/edit`)}>EDIT</button>
                   </div>
                 </div>
