@@ -7,12 +7,12 @@ import { playComplete } from '../utils/sounds'
 
 function LogPopover({ chore, mode, onClose, onLogged, persons }) {
   const todayIso = new Date().toISOString().slice(0, 10)
-  const [who, setWho] = useState('person1')
   const [when, setWhen] = useState(todayIso)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
 
-  async function submit() {
+  async function logAs(who) {
+    if (busy) return
     setBusy(true); setErr('')
     try {
       const fn = mode === 'early' ? api.logEarly : api.logExtra
@@ -27,38 +27,39 @@ function LogPopover({ chore, mode, onClose, onLogged, persons }) {
   }
 
   return (
-    <div className="popover-backdrop" onClick={onClose}>
-      <div className="popover-panel" onClick={e => e.stopPropagation()}>
-        <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>
-          {mode === 'early' ? 'EARLY — counts as the next scheduled one' : 'EXTRA — does not affect the schedule'}
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-box" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <div className="modal-title">
+            <span className="modal-emoji">{chore.emoji}</span>
+            <span className="modal-name">{chore.name}</span>
+          </div>
+          <button className="modal-close" onClick={onClose}>✕</button>
         </div>
-        <div style={{ fontWeight: 'bold', marginBottom: 12, fontSize: 14 }}>
-          {chore.emoji} {chore.name}
+
+        <div className="modal-last">
+          {mode === 'early'
+            ? <>logging <b>early</b> — counts as the next scheduled one</>
+            : <>logging <b>extra</b> — does not affect the schedule</>}
         </div>
-        <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-          {[
-            { key: 'person1',  label: persons.person1,  color: 'var(--person1)' },
-            { key: 'person2',  label: persons.person2,  color: 'var(--person2)' },
-            { key: 'together', label: 'together',       color: 'var(--together)' },
-          ].map(p => (
-            <button
-              key={p.key} type="button"
-              className={`tab-btn ${who === p.key ? 'selected' : ''}`}
-              style={who === p.key ? { color: p.color, borderColor: p.color } : {}}
-              onClick={() => setWho(p.key)}
-            >{p.label.toUpperCase()}</button>
-          ))}
-        </div>
-        <div className="field" style={{ margin: '0 0 12px 0' }}>
-          <label style={{ fontSize: 11 }}>done on</label>
+
+        <div className="modal-date">
+          <label>done on</label>
           <input type="date" value={when} max={todayIso} onChange={e => setWhen(e.target.value)} />
         </div>
-        {err && <div className="error-msg" style={{ marginBottom: 10 }}>{err}</div>}
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button type="button" className="btn small" disabled={busy} onClick={submit}>
-            {busy ? '...' : 'LOG'}
+
+        {err && <div className="error-msg">{err}</div>}
+
+        <div className="modal-complete-row">
+          <button className="modal-complete-btn person1" disabled={busy} onClick={() => logAs('person1')}>
+            {persons.person1[0].toUpperCase()}
           </button>
-          <button type="button" className="btn secondary small" onClick={onClose}>CANCEL</button>
+          <button className="modal-complete-btn together" disabled={busy} onClick={() => logAs('together')}>
+            ♡
+          </button>
+          <button className="modal-complete-btn person2" disabled={busy} onClick={() => logAs('person2')}>
+            {persons.person2[0].toUpperCase()}
+          </button>
         </div>
       </div>
     </div>
