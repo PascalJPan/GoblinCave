@@ -8,10 +8,16 @@ function fmtHistory(dueDate, completedAt) {
   const done = new Date(completedAt)
   const dueStr = due.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
   const timeStr = done.toLocaleString('en-GB', { hour: '2-digit', minute: '2-digit' })
-  const diffDays = Math.round((done - due) / 86400000)
-  const rel = diffDays <= 0 ? 'same day'
+  // Compare calendar dates (local), not raw timestamp difference, so 'same day'
+  // doesn't depend on time-of-day.
+  const dueDay = new Date(due.getFullYear(), due.getMonth(), due.getDate())
+  const doneDay = new Date(done.getFullYear(), done.getMonth(), done.getDate())
+  const diffDays = Math.round((doneDay - dueDay) / 86400000)
+  const rel = diffDays === 0 ? 'same day'
     : diffDays === 1 ? '1 day later'
-    : `${diffDays} days later`
+    : diffDays > 1 ? `${diffDays} days later`
+    : diffDays === -1 ? '1 day early'
+    : `${-diffDays} days early`
   return `due ${dueStr}, ${rel} ${timeStr}`
 }
 

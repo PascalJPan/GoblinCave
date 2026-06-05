@@ -150,12 +150,11 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _completed_at_iso(supplied: Optional[str]) -> str:
-    """If the user picked a date, store it as noon UTC on that date so the History page's
-    'due X, same day HH:MM' display stays sensible. If not, use real now."""
-    if not supplied:
-        return _now_iso()
-    return f"{supplied}T12:00:00+00:00"
+def _completed_at_iso(_supplied: Optional[str]) -> str:
+    """completed_at is always the wall-clock moment of logging. The picked date only
+    affects due_date (for stats bucketing). Otherwise the entry would sort wrong in
+    History and the 'same day' display logic would be confused."""
+    return _now_iso()
 
 
 def _consume_next_as_early(db, chore_id: int, completed_by: str, completed_at_date: date,
