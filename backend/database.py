@@ -48,9 +48,55 @@ CREATE TABLE IF NOT EXISTS chore_instances (
     status TEXT NOT NULL DEFAULT 'pending',
     completed_by TEXT,
     completed_at TEXT,
-    UNIQUE(slot_id, due_date)
+    kind TEXT NOT NULL DEFAULT 'regular'
 );
 """
+
+
+def _migrate(conn):
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(chore_instances)").fetchall()}
+    if 'kind' not in cols:
+        conn.execute("ALTER TABLE chore_instances ADD COLUMN kind TEXT NOT NULL DEFAULT 'regular'")
+        conn.execute("UPDATE chore_instances SET kind = 'regular' WHERE kind IS NULL OR kind = ''")
+        conn.commit()
+
+    # If the legacy table-level UNIQUE(slot_id, due_date) still exists, rebuild without it
+    # so 'extra' instances can coexist with regular ones on the same day.
+    legacy_uq = conn.execute("""
+        SELECT name FROM sqlite_master
+        WHERE type='index' AND tbl_name='chore_instances' AND sql LIKE '%UNIQUE%' AND name NOT LIKE 'uq_regular_slot_due'
+    """).fetchone()
+    has_partial = conn.execute("""
+        SELECT 1 FROM sqlite_master WHERE type='index' AND name='uq_regular_slot_due'
+    """).fetchone()
+
+    if legacy_uq or not has_partial:
+        conn.executescript("""
+        PRAGMA foreign_keys=OFF;
+        BEGIN TRANSACTION;
+        CREATE TABLE chore_instances_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chore_id INTEGER NOT NULL REFERENCES chores(id),
+            slot_id INTEGER NOT NULL REFERENCES chore_slots(id),
+            due_date TEXT NOT NULL,
+            assigned_to TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            completed_by TEXT,
+            completed_at TEXT,
+            kind TEXT NOT NULL DEFAULT 'regular'
+        );
+        INSERT INTO chore_instances_new
+            (id, chore_id, slot_id, due_date, assigned_to, status, completed_by, completed_at, kind)
+            SELECT id, chore_id, slot_id, due_date, assigned_to, status, completed_by, completed_at,
+                   COALESCE(kind, 'regular')
+            FROM chore_instances;
+        DROP TABLE chore_instances;
+        ALTER TABLE chore_instances_new RENAME TO chore_instances;
+        CREATE UNIQUE INDEX uq_regular_slot_due
+            ON chore_instances(slot_id, due_date) WHERE kind != 'extra';
+        COMMIT;
+        PRAGMA foreign_keys=ON;
+        """)
 
 CATEGORY_SEEDS = [
     "bathroom", "gardening", "general", "kitchen", "shopping", "trash", "washing"
@@ -161,5 +207,6 @@ def init_db():
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(SCHEMA)
     conn.commit()
+    _migrate(conn)
     _seed(conn)
     conn.close()

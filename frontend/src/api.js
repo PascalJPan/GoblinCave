@@ -32,6 +32,10 @@ export const api = {
   deleteChore: (id) => req('DELETE', `/chores/${id}`),
   reorderChores: (category, ids) => req('PATCH', '/chores/reorder', { category, ids }),
 
+  previewNext: (data) => req('POST', '/chores/preview-next', data),
+  logExtra: (id, data) => req('POST', `/chores/${id}/log-extra`, data),
+  logEarly: (id, data) => req('POST', `/chores/${id}/log-early`, data),
+
   complete: (instanceId, completed_by) =>
     req('POST', `/instances/${instanceId}/complete`, { completed_by }),
   uncomplete: (instanceId) => req('DELETE', `/instances/${instanceId}/complete`),

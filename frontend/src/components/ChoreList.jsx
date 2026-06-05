@@ -2,15 +2,83 @@ import { useState, useEffect, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { fmtDuration, daysSince, daysUntil } from '../utils/time'
+import { usePersons } from '../context/PersonContext'
+import { playComplete } from '../utils/sounds'
+
+function LogPopover({ chore, mode, onClose, onLogged, persons }) {
+  const todayIso = new Date().toISOString().slice(0, 10)
+  const [who, setWho] = useState('person1')
+  const [when, setWhen] = useState(todayIso)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  async function submit() {
+    setBusy(true); setErr('')
+    try {
+      const fn = mode === 'early' ? api.logEarly : api.logExtra
+      await fn(chore.id, { completed_by: who, completed_at: when || null })
+      playComplete()
+      onLogged()
+      onClose()
+    } catch (e) {
+      setErr(e.message)
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="popover-backdrop" onClick={onClose}>
+      <div className="popover-panel" onClick={e => e.stopPropagation()}>
+        <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>
+          {mode === 'early' ? 'EARLY — counts as the next scheduled one' : 'EXTRA — does not affect the schedule'}
+        </div>
+        <div style={{ fontWeight: 'bold', marginBottom: 12, fontSize: 14 }}>
+          {chore.emoji} {chore.name}
+        </div>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+          {[
+            { key: 'person1',  label: persons.person1,  color: 'var(--person1)' },
+            { key: 'person2',  label: persons.person2,  color: 'var(--person2)' },
+            { key: 'together', label: 'together',       color: 'var(--together)' },
+          ].map(p => (
+            <button
+              key={p.key} type="button"
+              className={`tab-btn ${who === p.key ? 'selected' : ''}`}
+              style={who === p.key ? { color: p.color, borderColor: p.color } : {}}
+              onClick={() => setWho(p.key)}
+            >{p.label.toUpperCase()}</button>
+          ))}
+        </div>
+        <div className="field" style={{ margin: '0 0 12px 0' }}>
+          <label style={{ fontSize: 11 }}>done on</label>
+          <input type="date" value={when} max={todayIso} onChange={e => setWhen(e.target.value)} />
+        </div>
+        {err && <div className="error-msg" style={{ marginBottom: 10 }}>{err}</div>}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button type="button" className="btn small" disabled={busy} onClick={submit}>
+            {busy ? '...' : 'LOG'}
+          </button>
+          <button type="button" className="btn secondary small" onClick={onClose}>CANCEL</button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 export default function ChoreList() {
   const [categories, setCategories] = useState([])
   const [chores, setChores] = useState([])
   const [loading, setLoading] = useState(true)
+  const [logTarget, setLogTarget] = useState(null) // { chore, mode }
   const navigate = useNavigate()
+  const persons = usePersons()
 
   const dragCat = useRef(null)
   const dragChore = useRef(null)
+
+  function refreshChores() {
+    api.listChores().then(setChores)
+  }
 
   useEffect(() => {
     Promise.all([api.listCategories(), api.listChores()])
@@ -83,6 +151,16 @@ export default function ChoreList() {
         </Link>
       </div>
 
+      {logTarget && (
+        <LogPopover
+          chore={logTarget.chore}
+          mode={logTarget.mode}
+          persons={persons}
+          onClose={() => setLogTarget(null)}
+          onLogged={refreshChores}
+        />
+      )}
+
       {categories.map(cat => {
         const catChores = choresByCategory[cat.name] || []
         return (
@@ -137,6 +215,10 @@ export default function ChoreList() {
                     </div>
                   </div>
                   <div className="chore-item-actions">
+                    <button className="btn small" title="Done early (counts as the next scheduled one)"
+                      onClick={() => setLogTarget({ chore, mode: 'early' })}>EARLY</button>
+                    <button className="btn secondary small" title="Extra log (does not affect the schedule)"
+                      onClick={() => setLogTarget({ chore, mode: 'extra' })}>EXTRA</button>
                     <button className="btn secondary small" onClick={() => navigate(`/chores/${chore.id}/edit`)}>EDIT</button>
                   </div>
                 </div>

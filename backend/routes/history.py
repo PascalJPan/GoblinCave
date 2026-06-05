@@ -15,7 +15,7 @@ def get_history(
     rows = db.execute(
         """
         SELECT
-            ci.id, ci.due_date, ci.assigned_to, ci.completed_by, ci.completed_at,
+            ci.id, ci.due_date, ci.assigned_to, ci.completed_by, ci.completed_at, ci.kind,
             c.name, c.emoji
         FROM chore_instances ci
         JOIN chores c ON c.id = ci.chore_id

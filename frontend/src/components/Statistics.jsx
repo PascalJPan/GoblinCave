@@ -169,6 +169,7 @@ export default function Statistics() {
   const [stats, setStats] = useState(null)
   const [chartView, setChartView] = useState('week')
   const [loading, setLoading] = useState(false)
+  const [includeExtras, setIncludeExtras] = useState(true)
 
   useEffect(() => {
     api.listChores().then(ch => {
@@ -183,7 +184,11 @@ export default function Statistics() {
     api.choreStats(selectedId).then(setStats).finally(() => setLoading(false))
   }, [selectedId])
 
-  const filtered = stats ? filterForView(stats.completions, chartView) : []
+  const completions = stats
+    ? (includeExtras ? stats.completions : stats.completions.filter(c => c.kind !== 'extra'))
+    : []
+  const filtered = filterForView(completions, chartView)
+  const hasExtras = stats && stats.completions.some(c => c.kind === 'extra')
 
   return (
     <div className="page">
@@ -215,6 +220,13 @@ export default function Statistics() {
           {chartView === 'week'  && <WeekChart  completions={filtered} />}
           {chartView === 'month' && <MonthChart completions={filtered} />}
           {chartView === 'year'  && <YearChart  completions={filtered} />}
+
+          {hasExtras && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 16, fontSize: 11, color: 'var(--text-dim)' }}>
+              <input type="checkbox" checked={includeExtras} onChange={e => setIncludeExtras(e.target.checked)} />
+              include extras
+            </label>
+          )}
         </>
       )}
     </div>

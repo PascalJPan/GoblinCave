@@ -49,16 +49,18 @@ def _monthly_raw(year: int, month: int, day: int) -> date | None:
 
 
 def first_monthly_due(created_date: date, day: int, preferred_weekday: str | None) -> date:
-    d = _monthly_raw(created_date.year, created_date.month, day)
-    if d is None or d < created_date:
-        next_month = created_date + relativedelta(months=1)
-        d = _monthly_raw(next_month.year, next_month.month, day)
-    while d is None:
-        next_month = d + relativedelta(months=1)
-        d = _monthly_raw(next_month.year, next_month.month, day)
-    if preferred_weekday:
-        d = _first_weekday_on_or_after(d, WEEKDAY_MAP[preferred_weekday])
-    return d
+    # Try the current month first; if preferred-weekday adjustment still lands in the past,
+    # roll forward month by month until we find a future date.
+    for offset in range(0, 13):
+        ref = created_date + relativedelta(months=offset)
+        d = _monthly_raw(ref.year, ref.month, day)
+        if d is None:
+            continue
+        if preferred_weekday:
+            d = _first_weekday_on_or_after(d, WEEKDAY_MAP[preferred_weekday])
+        if d >= created_date:
+            return d
+    raise ValueError(f"Could not find a future monthly date for day={day}")
 
 
 def next_monthly_due(last_due: date, day: int, preferred_weekday: str | None) -> date:
@@ -76,11 +78,12 @@ def next_monthly_due(last_due: date, day: int, preferred_weekday: str | None) ->
 
 def first_yearly_due(created_date: date, month_spec: str, preferred_weekday: str | None) -> date:
     month = MONTH_MAP[month_spec]
-    d = date(created_date.year, month, 1)
-    if d < created_date:
-        d = date(created_date.year + 1, month, 1)
-    if preferred_weekday:
-        d = _first_weekday_on_or_after(d, WEEKDAY_MAP[preferred_weekday])
+    for year_offset in (0, 1):
+        d = date(created_date.year + year_offset, month, 1)
+        if preferred_weekday:
+            d = _first_weekday_on_or_after(d, WEEKDAY_MAP[preferred_weekday])
+        if d >= created_date:
+            return d
     return d
 
 
@@ -167,7 +170,7 @@ def generate_for_slot(conn, chore: dict, slot: dict) -> dict | None:
     slot_id = slot['id']
 
     latest = conn.execute(
-        "SELECT * FROM chore_instances WHERE slot_id = ? ORDER BY due_date DESC LIMIT 1",
+        "SELECT * FROM chore_instances WHERE slot_id = ? AND kind != 'extra' ORDER BY due_date DESC LIMIT 1",
         (slot_id,)
     ).fetchone()
     latest = dict(latest) if latest else None
@@ -259,7 +262,7 @@ def peek_next_due(conn, chore: dict) -> tuple | None:
     candidates = []
     for slot in slots:
         latest = conn.execute(
-            "SELECT * FROM chore_instances WHERE slot_id = ? ORDER BY due_date DESC LIMIT 1",
+            "SELECT * FROM chore_instances WHERE slot_id = ? AND kind != 'extra' ORDER BY due_date DESC LIMIT 1",
             (slot['id'],)
         ).fetchone()
         latest = dict(latest) if latest else None
@@ -283,6 +286,58 @@ def peek_next_due(conn, chore: dict) -> tuple | None:
     candidates.sort(key=lambda x: x[0])
     best_due, best_assignee = candidates[0]
     return best_due.isoformat(), best_assignee
+
+
+def _prep_slots_for_chore(chore: dict, slots: list[dict]) -> list[dict]:
+    if chore['schedule_type'] == 'weekly' and slots:
+        cycle_length = max(s['row_index'] for s in slots) + 1
+    else:
+        cycle_length = 1
+    for s in slots:
+        s['_cycle_length'] = cycle_length
+    return slots
+
+
+def _candidate_for_slot(slot: dict, state: dict, chore: dict) -> tuple[date, str]:
+    if state['latest_due'] is None:
+        due = _compute_first_due(chore, slot)
+        assignee = resolve_assignee(slot, None)
+    else:
+        due = _next_due_strictly_after(
+            chore, slot, state['latest_due'],
+            max(state['latest_due'], state['latest_done_at'])
+        )
+        prior = {'assigned_to': state['latest_assignee'], 'completed_by': state['latest_done_by']}
+        assignee = resolve_assignee(slot, prior)
+    return due, assignee
+
+
+def simulate_next_due(chore: dict, slots: list[dict],
+                      consumed: list[tuple[str, date]]) -> tuple[date, str]:
+    """
+    Replay a series of pretend-completions (completed_by, completed_at_date) against the
+    soonest-upcoming slot each time, then return the next (due_date, assignee) that would appear.
+    Used for preview and for the create-with-initial-done flow.
+    """
+    slots = _prep_slots_for_chore(chore, list(slots))
+    states = {s['id']: {'latest_due': None, 'latest_done_by': None,
+                        'latest_done_at': None, 'latest_assignee': None}
+              for s in slots}
+
+    for completed_by, completed_at in consumed:
+        candidates = [(s, *_candidate_for_slot(s, states[s['id']], chore)) for s in slots]
+        candidates.sort(key=lambda x: x[1])
+        chosen_slot, chosen_due, chosen_assignee = candidates[0]
+        states[chosen_slot['id']] = {
+            'latest_due': chosen_due,
+            'latest_done_by': completed_by,
+            'latest_done_at': completed_at,
+            'latest_assignee': chosen_assignee,
+        }
+
+    candidates = [(_candidate_for_slot(s, states[s['id']], chore)) for s in slots]
+    candidates.sort(key=lambda x: x[0])
+    return candidates[0]
 
 
 def generate_next_after_completion(conn, chore: dict, slot_id: int, last_instance: dict):

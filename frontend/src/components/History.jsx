@@ -67,7 +67,11 @@ export default function History() {
         <div key={item.id} className="history-item">
           <div className="history-emoji">{item.emoji}</div>
           <div className="history-info">
-            <div className="history-name">{item.name}</div>
+            <div className="history-name" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span>{item.name}</span>
+              {item.kind === 'early' && <span className="badge early">EARLY</span>}
+              {item.kind === 'extra' && <span className="badge extra">EXTRA</span>}
+            </div>
             <div className="history-meta">{fmtHistory(item.due_date, item.completed_at)}</div>
           </div>
           <div className="history-who">

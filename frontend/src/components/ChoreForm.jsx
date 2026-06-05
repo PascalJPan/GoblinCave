@@ -156,7 +156,7 @@ export default function ChoreForm({ initial }) {
   const [emoji, setEmoji] = useState(initial?.emoji || '🧹')
   const [name, setName] = useState(initial?.name || '')
   const [description, setDescription] = useState(initial?.description || '')
-  const [category, setCategory] = useState(initial?.category || 'general')
+  const [category, setCategory] = useState(initial?.category || '')
   const [scheduleType, setScheduleType] = useState(initial?.schedule_type || 'weekly')
   const [prefWeekday, setPrefWeekday] = useState(initial?.preferred_weekday || null)
 
@@ -171,10 +171,54 @@ export default function ChoreForm({ initial }) {
 
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+
+  const todayIso = new Date().toISOString().slice(0, 10)
+  const [initialDoneOn, setInitialDoneOn] = useState(false)
+  const [initialDoneBy, setInitialDoneBy] = useState('person1')
+  const [initialDoneAt, setInitialDoneAt] = useState(todayIso)
+  const [skipNext, setSkipNext] = useState(false)
+  const [previewText, setPreviewText] = useState('')
 
   useEffect(() => {
-    api.listCategories().then(setCategories).catch(() => {})
+    api.listCategories().then(cats => {
+      setCategories(cats)
+      if (!initial && cats.length && !category) setCategory(cats[0].name)
+    }).catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Live preview: ask backend what the next-due would be after this initial completion.
+  useEffect(() => {
+    if (!initialDoneOn) { setPreviewText(''); return }
+    const slots = buildSlots(scheduleType, rows, daySlots)
+    if (!slots.length) { setPreviewText(''); return }
+    let cancelled = false
+    api.previewNext({
+      schedule_type: scheduleType,
+      preferred_weekday: scheduleType !== 'weekly' ? prefWeekday : null,
+      slots,
+      initial_done: { completed_by: initialDoneBy, completed_at: initialDoneAt || null },
+      skip_next: skipNext,
+    }).then(res => {
+      if (cancelled) return
+      const due = new Date(res.next_due_date + 'T00:00:00')
+      const today = new Date(); today.setHours(0,0,0,0)
+      const diffDays = Math.round((due - today) / 86400000)
+      const weeks = Math.floor(diffDays / 7)
+      const days = diffDays % 7
+      const inWhen = weeks > 0
+        ? (days > 0 ? `${weeks}w ${days}d` : `${weeks}w`)
+        : `${diffDays}d`
+      const dateStr = due.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' })
+      const who = res.next_assignee === 'person1' ? persons.person1
+                : res.next_assignee === 'person2' ? persons.person2
+                : 'together'
+      setPreviewText(`next: ${dateStr} (in ${inWhen}) — by ${who}`)
+    }).catch(() => setPreviewText('—'))
+    return () => { cancelled = true }
+  }, [initialDoneOn, initialDoneBy, initialDoneAt, skipNext, scheduleType, rows, daySlots, prefWeekday, persons])
 
   function handleScheduleType(t) {
     setScheduleType(t)
@@ -208,6 +252,10 @@ export default function ChoreForm({ initial }) {
       schedule_type: scheduleType,
       preferred_weekday: scheduleType !== 'weekly' ? prefWeekday : null,
       slots,
+    }
+    if (!initial && initialDoneOn) {
+      payload.initial_done = { completed_by: initialDoneBy, completed_at: initialDoneAt || null }
+      payload.skip_next = skipNext
     }
     try {
       if (initial) {
@@ -345,6 +393,47 @@ export default function ChoreForm({ initial }) {
           </div>
         </div>
 
+        {!initial && (
+          <div className="form-section">
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+              <input type="checkbox" checked={initialDoneOn} onChange={e => setInitialDoneOn(e.target.checked)} />
+              first time already done?
+            </label>
+            {initialDoneOn && (
+              <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {[
+                    { key: 'person1',  label: persons.person1,  color: 'var(--person1)' },
+                    { key: 'person2',  label: persons.person2,  color: 'var(--person2)' },
+                    { key: 'together', label: 'together',       color: 'var(--together)' },
+                  ].map(p => (
+                    <button
+                      key={p.key} type="button"
+                      className={`tab-btn ${initialDoneBy === p.key ? 'selected' : ''}`}
+                      style={initialDoneBy === p.key ? { color: p.color, borderColor: p.color } : {}}
+                      onClick={() => setInitialDoneBy(p.key)}
+                    >
+                      {p.label.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+                <div className="field" style={{ margin: 0 }}>
+                  <label style={{ fontSize: 11 }}>done on</label>
+                  <input type="date" value={initialDoneAt} max={todayIso}
+                         onChange={e => setInitialDoneAt(e.target.value)} />
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12 }}>
+                  <input type="checkbox" checked={skipNext} onChange={e => setSkipNext(e.target.checked)} />
+                  skip next time too
+                </label>
+                <div style={{ fontSize: 12, color: 'var(--text-dim)', minHeight: 16 }}>
+                  {previewText || 'calculating...'}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {error && <div className="error-msg" style={{ marginBottom: 16 }}>{error}</div>}
 
         <div style={{ display: 'flex', gap: 12 }}>
@@ -355,6 +444,43 @@ export default function ChoreForm({ initial }) {
             CANCEL
           </button>
         </div>
+
+        {initial && (
+          <div style={{ marginTop: 32, paddingTop: 20, borderTop: '1px solid var(--panel)' }}>
+            {!confirmDelete ? (
+              <button type="button" className="btn danger small" onClick={() => setConfirmDelete(true)}>
+                DELETE CHORE
+              </button>
+            ) : (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>
+                  delete "{initial.name}"? history stays.
+                </span>
+                <button
+                  type="button"
+                  className="btn danger small"
+                  disabled={deleting}
+                  onClick={async () => {
+                    setDeleting(true)
+                    try {
+                      await api.deleteChore(initial.id)
+                      navigate('/chores')
+                    } catch (err) {
+                      setError(err.message)
+                      setDeleting(false)
+                      setConfirmDelete(false)
+                    }
+                  }}
+                >YES</button>
+                <button
+                  type="button"
+                  className="btn secondary small"
+                  onClick={() => setConfirmDelete(false)}
+                >CANCEL</button>
+              </div>
+            )}
+          </div>
+        )}
       </form>
     </div>
   )

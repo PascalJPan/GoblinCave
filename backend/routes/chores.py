@@ -1,11 +1,18 @@
-import json
-from datetime import date
+from datetime import date, datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from auth import require_auth
 from database import get_db
-from scheduler import peek_next_due
+from scheduler import (
+    peek_next_due,
+    simulate_next_due,
+    generate_next_after_completion,
+    _prep_slots_for_chore,
+    _compute_first_due,
+    _next_due_strictly_after,
+    resolve_assignee,
+)
 
 router = APIRouter(prefix="/chores", tags=["chores"])
 
@@ -17,6 +24,11 @@ class SlotIn(BaseModel):
     alt_start: str = 'person1'
 
 
+class InitialDone(BaseModel):
+    completed_by: str
+    completed_at: Optional[str] = None  # ISO date; defaults to today
+
+
 class ChoreIn(BaseModel):
     name: str
     description: str = ''
@@ -25,6 +37,21 @@ class ChoreIn(BaseModel):
     schedule_type: str
     preferred_weekday: Optional[str] = None
     slots: list[SlotIn]
+    initial_done: Optional[InitialDone] = None
+    skip_next: bool = False
+
+
+class PreviewIn(BaseModel):
+    schedule_type: str
+    preferred_weekday: Optional[str] = None
+    slots: list[SlotIn]
+    initial_done: InitialDone
+    skip_next: bool = False
+
+
+class LogIn(BaseModel):
+    completed_by: str
+    completed_at: Optional[str] = None  # ISO date; defaults to today
 
 
 class ChoreUpdate(BaseModel):
@@ -101,8 +128,165 @@ def create_chore(body: ChoreIn, db=Depends(get_db), _=Depends(require_auth)):
     chore_id = cur.lastrowid
     _insert_slots(db, chore_id, body.slots)
     db.commit()
+
+    if body.initial_done:
+        completed_at_date = _parse_date(body.initial_done.completed_at)
+        ts = _completed_at_iso(body.initial_done.completed_at)
+        _consume_next_as_early(db, chore_id, body.initial_done.completed_by, completed_at_date, ts)
+        if body.skip_next:
+            _consume_next_as_early(db, chore_id, body.initial_done.completed_by, completed_at_date, ts)
+
     row = db.execute("SELECT * FROM chores WHERE id = ?", (chore_id,)).fetchone()
     return _chore_with_timing(db, row)
+
+
+def _parse_date(s: Optional[str]) -> date:
+    if not s:
+        return date.today()
+    return date.fromisoformat(s)
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _completed_at_iso(supplied: Optional[str]) -> str:
+    """If the user picked a date, store it as noon UTC on that date so the History page's
+    'due X, same day HH:MM' display stays sensible. If not, use real now."""
+    if not supplied:
+        return _now_iso()
+    return f"{supplied}T12:00:00+00:00"
+
+
+def _consume_next_as_early(db, chore_id: int, completed_by: str, completed_at_date: date,
+                            completed_at_iso: Optional[str] = None):
+    """Materialize the next-regular instance for this chore and mark it as 'early' done."""
+    chore = dict(db.execute("SELECT * FROM chores WHERE id = ?", (chore_id,)).fetchone())
+    slots = [dict(s) for s in db.execute(
+        "SELECT * FROM chore_slots WHERE chore_id = ? AND is_active = 1", (chore_id,)
+    ).fetchall()]
+    if not slots:
+        raise HTTPException(400, "Chore has no active slots")
+    _prep_slots_for_chore(chore, slots)
+
+    candidates = []
+    for slot in slots:
+        latest = db.execute(
+            "SELECT * FROM chore_instances WHERE slot_id = ? AND kind != 'extra' "
+            "ORDER BY due_date DESC LIMIT 1",
+            (slot['id'],)
+        ).fetchone()
+        latest = dict(latest) if latest else None
+        if latest is None:
+            due = _compute_first_due(chore, slot)
+            assignee = resolve_assignee(slot, None)
+        elif latest['status'] == 'pending':
+            due = date.fromisoformat(latest['due_date'])
+            assignee = latest['assigned_to']
+        else:
+            last_due = date.fromisoformat(latest['due_date'])
+            completed = date.fromisoformat((latest['completed_at'] or latest['due_date'])[:10])
+            due = _next_due_strictly_after(chore, slot, last_due, max(last_due, completed))
+            assignee = resolve_assignee(slot, latest)
+        candidates.append((due, assignee, slot, latest))
+    candidates.sort(key=lambda x: x[0])
+    chosen_due, chosen_assignee, chosen_slot, chosen_latest = candidates[0]
+
+    # Materialize the row if it doesn't exist
+    existing = db.execute(
+        "SELECT * FROM chore_instances WHERE slot_id = ? AND due_date = ? AND kind != 'extra'",
+        (chosen_slot['id'], chosen_due.isoformat())
+    ).fetchone()
+    ts = completed_at_iso or _now_iso()
+    if existing is None:
+        db.execute(
+            "INSERT INTO chore_instances (chore_id, slot_id, due_date, assigned_to, status, "
+            "completed_by, completed_at, kind) VALUES (?,?,?,?,?,?,?,?)",
+            (chore_id, chosen_slot['id'], chosen_due.isoformat(), chosen_assignee,
+             'done', completed_by, ts, 'early')
+        )
+        db.commit()
+        inst_row = dict(db.execute(
+            "SELECT * FROM chore_instances WHERE slot_id = ? AND due_date = ? AND kind != 'extra'",
+            (chosen_slot['id'], chosen_due.isoformat())
+        ).fetchone())
+    else:
+        if existing['status'] == 'done':
+            raise HTTPException(400, "Next instance is already completed")
+        db.execute(
+            "UPDATE chore_instances SET status='done', completed_by=?, completed_at=?, kind='early' "
+            "WHERE id=?",
+            (completed_by, ts, existing['id'])
+        )
+        db.commit()
+        inst_row = dict(db.execute(
+            "SELECT * FROM chore_instances WHERE id = ?", (existing['id'],)
+        ).fetchone())
+
+    # Seed the next cycle if it's already due
+    generate_next_after_completion(db, chore, chosen_slot['id'], inst_row)
+    return inst_row
+
+
+@router.post("/preview-next")
+def preview_next(body: PreviewIn, _=Depends(require_auth)):
+    if body.schedule_type not in ('weekly', 'monthly', 'yearly'):
+        raise HTTPException(400, "Invalid schedule_type")
+    if not body.slots:
+        raise HTTPException(400, "At least one slot required")
+
+    chore = {
+        'id': 0, 'name': '', 'description': '', 'emoji': '',
+        'category': '', 'schedule_type': body.schedule_type,
+        'preferred_weekday': body.preferred_weekday,
+        'created_at': date.today().isoformat(),
+    }
+    slots = [{'id': i + 1, 'chore_id': 0, **s.model_dump(), 'is_active': 1}
+             for i, s in enumerate(body.slots)]
+
+    completed_date = _parse_date(body.initial_done.completed_at)
+    consumed = [(body.initial_done.completed_by, completed_date)]
+    if body.skip_next:
+        consumed.append((body.initial_done.completed_by, completed_date))
+
+    due, assignee = simulate_next_due(chore, slots, consumed)
+    return {"next_due_date": due.isoformat(), "next_assignee": assignee}
+
+
+@router.post("/{chore_id}/log-extra", status_code=201)
+def log_extra(chore_id: int, body: LogIn, db=Depends(get_db), _=Depends(require_auth)):
+    if body.completed_by not in ('person1', 'person2', 'together'):
+        raise HTTPException(400, "completed_by must be person1, person2, or together")
+    chore = db.execute("SELECT * FROM chores WHERE id = ? AND is_active = 1", (chore_id,)).fetchone()
+    if not chore:
+        raise HTTPException(404, "Chore not found")
+    slot = db.execute(
+        "SELECT * FROM chore_slots WHERE chore_id = ? AND is_active = 1 ORDER BY id LIMIT 1",
+        (chore_id,)
+    ).fetchone()
+    if not slot:
+        raise HTTPException(400, "Chore has no active slots")
+    when = _parse_date(body.completed_at)
+    db.execute(
+        "INSERT INTO chore_instances (chore_id, slot_id, due_date, assigned_to, status, "
+        "completed_by, completed_at, kind) VALUES (?,?,?,?,?,?,?,?)",
+        (chore_id, slot['id'], when.isoformat(), body.completed_by, 'done',
+         body.completed_by, _completed_at_iso(body.completed_at), 'extra')
+    )
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/{chore_id}/log-early", status_code=201)
+def log_early(chore_id: int, body: LogIn, db=Depends(get_db), _=Depends(require_auth)):
+    if body.completed_by not in ('person1', 'person2', 'together'):
+        raise HTTPException(400, "completed_by must be person1, person2, or together")
+    chore = db.execute("SELECT * FROM chores WHERE id = ? AND is_active = 1", (chore_id,)).fetchone()
+    if not chore:
+        raise HTTPException(404, "Chore not found")
+    when = _parse_date(body.completed_at)
+    _consume_next_as_early(db, chore_id, body.completed_by, when, _completed_at_iso(body.completed_at))
+    return {"ok": True}
 
 
 @router.get("/{chore_id}")
@@ -179,7 +363,7 @@ def chore_stats(chore_id: int, db=Depends(get_db), _=Depends(require_auth)):
     if not chore:
         raise HTTPException(404, "Chore not found")
     rows = db.execute(
-        "SELECT completed_at, completed_by, due_date FROM chore_instances "
+        "SELECT completed_at, completed_by, due_date, kind FROM chore_instances "
         "WHERE chore_id = ? AND status = 'done' ORDER BY completed_at ASC",
         (chore_id,)
     ).fetchall()
