@@ -178,7 +178,7 @@ export default function ChoreForm({ initial }) {
   const [initialDoneOn, setInitialDoneOn] = useState(false)
   const [initialDoneBy, setInitialDoneBy] = useState('person1')
   const [initialDoneAt, setInitialDoneAt] = useState(todayIso)
-  const [skipNext, setSkipNext] = useState(false)
+  const [initialDoneKind, setInitialDoneKind] = useState('early')
   const [previewText, setPreviewText] = useState('')
 
   useEffect(() => {
@@ -191,26 +191,26 @@ export default function ChoreForm({ initial }) {
 
   // Live preview: ask backend what the next-due would be after this initial completion.
   useEffect(() => {
-    if (!initialDoneOn) { setPreviewText(''); return }
+    if (!initialDoneOn || !persons) { setPreviewText(''); return }
     const slots = buildSlots(scheduleType, rows, daySlots)
-    if (!slots.length) { setPreviewText(''); return }
+    if (!slots.length) { setPreviewText('pick a day first'); return }
+    setPreviewText('calculating...')
     let cancelled = false
     api.previewNext({
       schedule_type: scheduleType,
       preferred_weekday: scheduleType !== 'weekly' ? prefWeekday : null,
       slots,
-      initial_done: { completed_by: initialDoneBy, completed_at: initialDoneAt || null },
-      skip_next: skipNext,
+      initial_done: { completed_by: initialDoneBy, completed_at: initialDoneAt || null, kind: initialDoneKind },
     }).then(res => {
       if (cancelled) return
       const due = new Date(res.next_due_date + 'T00:00:00')
       const today = new Date(); today.setHours(0,0,0,0)
       const diffDays = Math.round((due - today) / 86400000)
-      const weeks = Math.floor(diffDays / 7)
-      const days = diffDays % 7
+      const weeks = Math.floor(Math.abs(diffDays) / 7)
+      const days = Math.abs(diffDays) % 7
       const inWhen = weeks > 0
         ? (days > 0 ? `${weeks}w ${days}d` : `${weeks}w`)
-        : `${diffDays}d`
+        : `${Math.abs(diffDays)}d`
       const dateStr = due.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' })
       const who = res.next_assignee === 'person1' ? persons.person1
                 : res.next_assignee === 'person2' ? persons.person2
@@ -218,7 +218,7 @@ export default function ChoreForm({ initial }) {
       setPreviewText(`next: ${dateStr} (in ${inWhen}) — by ${who}`)
     }).catch(() => setPreviewText('—'))
     return () => { cancelled = true }
-  }, [initialDoneOn, initialDoneBy, initialDoneAt, skipNext, scheduleType, rows, daySlots, prefWeekday, persons])
+  }, [initialDoneOn, initialDoneBy, initialDoneAt, initialDoneKind, scheduleType, rows, daySlots, prefWeekday, persons])
 
   function handleScheduleType(t) {
     setScheduleType(t)
@@ -254,8 +254,11 @@ export default function ChoreForm({ initial }) {
       slots,
     }
     if (!initial && initialDoneOn) {
-      payload.initial_done = { completed_by: initialDoneBy, completed_at: initialDoneAt || null }
-      payload.skip_next = skipNext
+      payload.initial_done = {
+        completed_by: initialDoneBy,
+        completed_at: initialDoneAt || null,
+        kind: initialDoneKind,
+      }
     }
     try {
       if (initial) {
@@ -422,12 +425,22 @@ export default function ChoreForm({ initial }) {
                   <input type="date" value={initialDoneAt} max={todayIso}
                          onChange={e => setInitialDoneAt(e.target.value)} />
                 </div>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12 }}>
-                  <input type="checkbox" checked={skipNext} onChange={e => setSkipNext(e.target.checked)} />
-                  skip next time too
-                </label>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button
+                    type="button"
+                    className={`tab-btn ${initialDoneKind === 'early' ? 'selected' : ''}`}
+                    onClick={() => setInitialDoneKind('early')}
+                    title="counts as the first scheduled one (shifts the schedule)"
+                  >EARLY</button>
+                  <button
+                    type="button"
+                    className={`tab-btn ${initialDoneKind === 'extra' ? 'selected' : ''}`}
+                    onClick={() => setInitialDoneKind('extra')}
+                    title="side-log only — does not change the schedule"
+                  >EXTRA</button>
+                </div>
                 <div style={{ fontSize: 12, color: 'var(--text-dim)', minHeight: 16 }}>
-                  {previewText || 'calculating...'}
+                  {previewText}
                 </div>
               </div>
             )}

@@ -27,6 +27,7 @@ class SlotIn(BaseModel):
 class InitialDone(BaseModel):
     completed_by: str
     completed_at: Optional[str] = None  # ISO date; defaults to today
+    kind: str = 'early'  # 'early' (consumes next scheduled) or 'extra' (side-log)
 
 
 class ChoreIn(BaseModel):
@@ -38,7 +39,6 @@ class ChoreIn(BaseModel):
     preferred_weekday: Optional[str] = None
     slots: list[SlotIn]
     initial_done: Optional[InitialDone] = None
-    skip_next: bool = False
 
 
 class PreviewIn(BaseModel):
@@ -46,7 +46,6 @@ class PreviewIn(BaseModel):
     preferred_weekday: Optional[str] = None
     slots: list[SlotIn]
     initial_done: InitialDone
-    skip_next: bool = False
 
 
 class LogIn(BaseModel):
@@ -132,8 +131,9 @@ def create_chore(body: ChoreIn, db=Depends(get_db), _=Depends(require_auth)):
     if body.initial_done:
         completed_at_date = _parse_date(body.initial_done.completed_at)
         ts = _completed_at_iso(body.initial_done.completed_at)
-        _consume_next_as_early(db, chore_id, body.initial_done.completed_by, completed_at_date, ts)
-        if body.skip_next:
+        if body.initial_done.kind == 'extra':
+            _insert_extra(db, chore_id, body.initial_done.completed_by, completed_at_date, ts)
+        else:  # 'early'
             _consume_next_as_early(db, chore_id, body.initial_done.completed_by, completed_at_date, ts)
 
     row = db.execute("SELECT * FROM chores WHERE id = ?", (chore_id,)).fetchone()
@@ -155,6 +155,21 @@ def _completed_at_iso(_supplied: Optional[str]) -> str:
     affects due_date (for stats bucketing). Otherwise the entry would sort wrong in
     History and the 'same day' display logic would be confused."""
     return _now_iso()
+
+
+def _insert_extra(db, chore_id: int, completed_by: str, when: date, ts: str):
+    slot = db.execute(
+        "SELECT * FROM chore_slots WHERE chore_id = ? AND is_active = 1 ORDER BY id LIMIT 1",
+        (chore_id,)
+    ).fetchone()
+    if not slot:
+        raise HTTPException(400, "Chore has no active slots")
+    db.execute(
+        "INSERT INTO chore_instances (chore_id, slot_id, due_date, assigned_to, status, "
+        "completed_by, completed_at, kind) VALUES (?,?,?,?,?,?,?,?)",
+        (chore_id, slot['id'], when.isoformat(), completed_by, 'done', completed_by, ts, 'extra')
+    )
+    db.commit()
 
 
 def _consume_next_as_early(db, chore_id: int, completed_by: str, completed_at_date: date,
@@ -244,9 +259,10 @@ def preview_next(body: PreviewIn, _=Depends(require_auth)):
              for i, s in enumerate(body.slots)]
 
     completed_date = _parse_date(body.initial_done.completed_at)
-    consumed = [(body.initial_done.completed_by, completed_date)]
-    if body.skip_next:
-        consumed.append((body.initial_done.completed_by, completed_date))
+    # 'early' consumes the next scheduled slot; 'extra' is a side-log that doesn't
+    # touch the schedule, so the preview is just the first natural cycle.
+    consumed = ([(body.initial_done.completed_by, completed_date)]
+                if body.initial_done.kind == 'early' else [])
 
     due, assignee = simulate_next_due(chore, slots, consumed)
     return {"next_due_date": due.isoformat(), "next_assignee": assignee}
