@@ -208,9 +208,9 @@ def generate_for_slot(conn, chore: dict, slot: dict) -> dict | None:
 
     if latest is None:
         due = _compute_first_due(chore, slot)
-        assigned = _resolve_assignee_chorewide(conn, chore['id'], slot, None, due)
-        _upsert_instance(conn, chore['id'], slot_id, due, assigned)
         if due <= today:
+            assigned = _resolve_assignee_chorewide(conn, chore['id'], slot, None, due)
+            _upsert_instance(conn, chore['id'], slot_id, due, assigned)
             return _fetch(conn, slot_id, due)
         return None
 
