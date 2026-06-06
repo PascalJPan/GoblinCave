@@ -36,21 +36,32 @@ const PERSON_COLOR = {
   together: '#ec4899', // pink
 }
 
-function hashHue(str) {
-  let h = 0
-  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0
-  return ((h % 360) + 360) % 360
+// Hand-picked palette that spans the hue wheel including yellow and red,
+// chosen for visibility on the dark sky. Assigned alphabetically across
+// the actual categories present, so collisions only happen past 10 cats.
+const CATEGORY_PALETTE = [
+  '#ef4444', // red
+  '#f97316', // orange
+  '#eab308', // yellow
+  '#84cc16', // lime
+  '#22c55e', // green
+  '#14b8a6', // teal
+  '#06b6d4', // cyan
+  '#3b82f6', // blue
+  '#a855f7', // violet
+  '#ec4899', // pink
+]
+
+function buildCategoryColorMap(categories) {
+  const sorted = [...new Set(categories)].filter(Boolean).sort()
+  const map = {}
+  sorted.forEach((cat, i) => { map[cat] = CATEGORY_PALETTE[i % CATEGORY_PALETTE.length] })
+  return map
 }
 
-function categoryColor(category) {
-  // Bright, well-saturated colors on a dark background; lightness chosen
-  // to read clearly without going washed-out.
-  return `hsl(${hashHue(category || '')}, 70%, 65%)`
-}
-
-function colorFor(c, mode) {
+function colorFor(c, mode, catMap) {
   if (mode === 'person')   return PERSON_COLOR[c.by] || '#ffffff'
-  if (mode === 'category') return categoryColor(c.category)
+  if (mode === 'category') return catMap[c.category] || '#ffffff'
   return '#ffffff'
 }
 
@@ -145,6 +156,11 @@ export default function Stars() {
     }))
   }, [completions])
 
+  const categoryColorMap = useMemo(() => {
+    if (!completions) return {}
+    return buildCategoryColorMap(completions.map(c => c.category))
+  }, [completions])
+
   const categoryCounts = useMemo(() => {
     if (!completions || colorMode !== 'category') return null
     const m = {}
@@ -179,9 +195,11 @@ export default function Stars() {
             </span>
           )}
           {colorMode === 'category' && categoryCounts && (
-            <span style={{ marginLeft: 14, fontSize: 11, color: 'var(--text-dim)', display: 'inline-flex', gap: 10, flexWrap: 'wrap' }}>
+            <span style={{ marginLeft: 14, fontSize: 11, color: 'var(--text-dim)', display: 'inline-flex', gap: 12, flexWrap: 'wrap', rowGap: 4 }}>
               {categoryCounts.map(([cat, n]) => (
-                <span key={cat} style={{ color: categoryColor(cat) }}>● {n}</span>
+                <span key={cat}>
+                  {cat} <span style={{ color: categoryColorMap[cat] }}>●</span> {n}
+                </span>
               ))}
             </span>
           )}
@@ -194,7 +212,7 @@ export default function Stars() {
       <div className="stars-sky">
         {placedStars.map(s => {
           const size  = sizeForAge(ageMonths(s.at))
-          const color = colorFor(s, colorMode)
+          const color = colorFor(s, colorMode, categoryColorMap)
           return (
             <div key={s.id} className="stars-star" style={{ left: `${s.x}%`, top: `${s.y}%` }}>
               <WaveStar size={size} color={color} seed={s.id} />
