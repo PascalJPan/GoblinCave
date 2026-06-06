@@ -9,9 +9,10 @@ router = APIRouter(prefix="/history", tags=["history"])
 def get_all(db=Depends(get_db), _=Depends(require_auth)):
     rows = db.execute(
         """
-        SELECT id, completed_by, completed_at, kind
-        FROM chore_instances WHERE status = 'done' AND completed_at IS NOT NULL
-        ORDER BY completed_at ASC
+        SELECT ci.id, ci.completed_by, ci.completed_at, ci.kind, c.category
+        FROM chore_instances ci JOIN chores c ON ci.chore_id = c.id
+        WHERE ci.status = 'done' AND ci.completed_at IS NOT NULL
+        ORDER BY ci.completed_at ASC
         """
     ).fetchall()
     return [dict(r) for r in rows]

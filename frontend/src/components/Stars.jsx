@@ -29,46 +29,37 @@ function mulberry32(a) {
   }
 }
 
-function colorFor(by, on) {
-  if (!on) return '#ffffff'
-  if (by === 'person1')  return 'var(--person1)'
-  if (by === 'person2')  return 'var(--person2)'
-  return 'var(--together)'
+// Person colors as raw values (so they can drive an inline SVG gradient stop too).
+const PERSON_COLOR = {
+  person1: '#7c3aed',  // purple
+  person2: '#f59e0b',  // orange
+  together: '#ec4899', // pink
 }
 
-// ── Halo gradients shared across all stars ───────────────────────────────────
-function HaloDefs() {
-  // Four gradients so a halo can match its star color (white + 3 person tints).
-  const halos = [
-    { id: 'halo-w', stop: '255,255,255' },
-    { id: 'halo-p1', stop: '124,58,237' },   // purple
-    { id: 'halo-p2', stop: '245,158,11' },   // orange
-    { id: 'halo-t',  stop: '236,72,153' },   // pink
-  ]
-  return (
-    <svg style={{ position: 'absolute', width: 0, height: 0 }} aria-hidden="true">
-      <defs>
-        {halos.map(h => (
-          <radialGradient key={h.id} id={h.id} cx="50%" cy="50%" r="50%">
-            <stop offset="0%"   stopColor={`rgb(${h.stop})`} stopOpacity="0.55" />
-            <stop offset="60%"  stopColor={`rgb(${h.stop})`} stopOpacity="0.12" />
-            <stop offset="100%" stopColor={`rgb(${h.stop})`} stopOpacity="0" />
-          </radialGradient>
-        ))}
-      </defs>
-    </svg>
-  )
+function hashHue(str) {
+  let h = 0
+  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0
+  return ((h % 360) + 360) % 360
 }
 
-function haloId(by, on) {
-  if (!on) return 'halo-w'
-  if (by === 'person1') return 'halo-p1'
-  if (by === 'person2') return 'halo-p2'
-  return 'halo-t'
+function categoryColor(category) {
+  // Bright, well-saturated colors on a dark background; lightness chosen
+  // to read clearly without going washed-out.
+  return `hsl(${hashHue(category || '')}, 70%, 65%)`
 }
+
+function colorFor(c, mode) {
+  if (mode === 'person')   return PERSON_COLOR[c.by] || '#ffffff'
+  if (mode === 'category') return categoryColor(c.category)
+  return '#ffffff'
+}
+
+const MODE_ORDER = ['none', 'person', 'category']
+const MODE_LABEL = { none: 'no color', person: 'by person', category: 'by category' }
 
 // ── The star itself: 8 rays in alternating long/short pattern, long ones wave-curved ──
-function WaveStar({ size, color, halo, seed }) {
+function WaveStar({ size, color, seed }) {
+  const haloId = `h${seed}`
   const rng = useMemo(() => mulberry32(seed >>> 0), [seed])
   const { rotation, lengths, lean } = useMemo(() => {
     const _rot = rng() * 360
@@ -114,7 +105,14 @@ function WaveStar({ size, color, halo, seed }) {
   return (
     <svg width={size} height={size} viewBox="-20 -20 40 40"
          style={{ transform: `rotate(${rotation}deg)`, display: 'block', overflow: 'visible' }}>
-      <circle cx="0" cy="0" r="18" fill={`url(#${halo})`} />
+      <defs>
+        <radialGradient id={haloId} cx="50%" cy="50%" r="50%">
+          <stop offset="0%"   stopColor={color} stopOpacity="0.55" />
+          <stop offset="60%"  stopColor={color} stopOpacity="0.12" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </radialGradient>
+      </defs>
+      <circle cx="0" cy="0" r="18" fill={`url(#${haloId})`} />
       <g>{rays}</g>
       <circle cx="0" cy="0" r="2.4" fill={color} />
     </svg>
@@ -124,7 +122,7 @@ function WaveStar({ size, color, halo, seed }) {
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function Stars() {
   const [completions, setCompletions] = useState(null)
-  const [colorByPerson, setColorByPerson] = useState(false)
+  const [colorMode, setColorMode] = useState('none')
 
   useEffect(() => {
     api.allCompletions()
@@ -140,6 +138,7 @@ export default function Stars() {
     return completions.map(c => ({
       id: c.id,
       by: c.completed_by,
+      category: c.category,
       at: c.completed_at,
       x: 4 + Math.random() * 92,   // % within sky; small margin so they don't clip
       y: 4 + Math.random() * 92,
@@ -156,36 +155,49 @@ export default function Stars() {
     return acc
   }, { total: 0 })
 
+  function cycleMode() {
+    setColorMode(m => MODE_ORDER[(MODE_ORDER.indexOf(m) + 1) % MODE_ORDER.length])
+  }
+
+  const categoryCounts = useMemo(() => {
+    if (colorMode !== 'category') return null
+    const m = {}
+    completions.forEach(c => { m[c.category] = (m[c.category] || 0) + 1 })
+    return Object.entries(m).sort((a, b) => b[1] - a[1])
+  }, [completions, colorMode])
+
   return (
     <div className="stars-page">
-      <HaloDefs />
-
       <div className="stars-toolbar">
         <div className="stars-count">
           <b style={{ fontSize: 14 }}>{counts.total}</b>
-          {colorByPerson && (
+          {colorMode === 'person' && (
             <span style={{ marginLeft: 14, fontSize: 11, color: 'var(--text-dim)' }}>
               <span style={{ color: 'var(--person1)' }}>● {counts.person1 || 0}</span>{'  '}
               <span style={{ color: 'var(--person2)' }}>● {counts.person2 || 0}</span>{'  '}
               <span style={{ color: 'var(--together)' }}>● {counts.together || 0}</span>
             </span>
           )}
+          {colorMode === 'category' && categoryCounts && (
+            <span style={{ marginLeft: 14, fontSize: 11, color: 'var(--text-dim)', display: 'inline-flex', gap: 10, flexWrap: 'wrap' }}>
+              {categoryCounts.map(([cat, n]) => (
+                <span key={cat} style={{ color: categoryColor(cat) }}>● {n}</span>
+              ))}
+            </span>
+          )}
         </div>
-        <label className="stars-toggle">
-          <input type="checkbox" checked={colorByPerson}
-                 onChange={e => setColorByPerson(e.target.checked)} />
-          <span>color by person</span>
-        </label>
+        <button className="stars-toggle" type="button" onClick={cycleMode}>
+          {MODE_LABEL[colorMode]}
+        </button>
       </div>
 
       <div className="stars-sky">
         {placedStars.map(s => {
           const size  = sizeForAge(ageMonths(s.at))
-          const color = colorFor(s.by, colorByPerson)
-          const halo  = haloId(s.by, colorByPerson)
+          const color = colorFor(s, colorMode)
           return (
             <div key={s.id} className="stars-star" style={{ left: `${s.x}%`, top: `${s.y}%` }}>
-              <WaveStar size={size} color={color} halo={halo} seed={s.id} />
+              <WaveStar size={size} color={color} seed={s.id} />
             </div>
           )
         })}

@@ -774,13 +774,16 @@ body[data-light-level="0"] .sun-btn:hover {
   border: 1px solid rgba(255,255,255,0.08);
 }
 .stars-toggle {
-  display: flex; align-items: center; gap: 6px;
   background: rgba(0,0,0,0.35);
   padding: 6px 12px; border-radius: 4px;
   backdrop-filter: blur(4px);
   border: 1px solid rgba(255,255,255,0.08);
-  cursor: pointer; font-size: 11px; color: var(--text-dim);
+  cursor: pointer; font-size: 11px; color: var(--text);
+  font-family: inherit; letter-spacing: 0.5px;
+  transition: background 0.15s, border-color 0.15s;
 }
+.stars-toggle:hover { background: rgba(0,0,0,0.5); border-color: rgba(255,255,255,0.16); }
+.stars-toggle:active { transform: scale(0.97); }
 .stars-sky {
   position: absolute; inset: 0;
 }
