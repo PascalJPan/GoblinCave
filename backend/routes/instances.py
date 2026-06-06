@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from auth import require_auth
 from database import get_db
-from scheduler import generate_next_after_completion
+from scheduler import generate_next_after_completion, reassign_pending_alternating
 
 router = APIRouter(prefix="/instances", tags=["instances"])
 
@@ -40,6 +40,7 @@ def complete_instance(
     chore = db.execute("SELECT * FROM chores WHERE id = ?", (row['chore_id'],)).fetchone()
     if chore and chore['is_active']:
         generate_next_after_completion(db, dict(chore), row['slot_id'], dict(row))
+        reassign_pending_alternating(db, row['chore_id'])
 
     return {"ok": True, "completed_by": body.completed_by}
 
@@ -63,4 +64,5 @@ def uncomplete_instance(instance_id: int, db=Depends(get_db), _=Depends(require_
         (instance_id,)
     )
     db.commit()
+    reassign_pending_alternating(db, row['chore_id'])
     return {"ok": True}

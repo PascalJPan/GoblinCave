@@ -145,6 +145,34 @@ def _resolve_assignee_chorewide(conn, chore_id: int, slot: dict,
     return resolve_assignee(slot, per_slot_latest)
 
 
+def reassign_pending_alternating(conn, chore_id: int) -> int:
+    """Re-derive `assigned_to` on every pending alternating instance of this chore based on
+    the current chore-wide predecessor. Idempotent and cheap; safe to call after any state
+    change that could shift the predecessor (complete, uncomplete, early-log, slot edit).
+    Returns how many rows were updated."""
+    rows = conn.execute("""
+        SELECT ci.id, ci.slot_id, ci.due_date, ci.assigned_to
+        FROM chore_instances ci
+        JOIN chore_slots cs ON ci.slot_id = cs.id
+        WHERE cs.chore_id = ? AND cs.assignee = 'alternating'
+          AND ci.status = 'pending' AND ci.kind != 'extra'
+        ORDER BY ci.due_date ASC, ci.id ASC
+    """, (chore_id,)).fetchall()
+    updated = 0
+    for r in rows:
+        due = date.fromisoformat(r['due_date'])
+        slot = dict(conn.execute("SELECT * FROM chore_slots WHERE id = ?", (r['slot_id'],)).fetchone())
+        pred = _chore_alt_predecessor(conn, chore_id, due)
+        new_assignee = resolve_assignee(slot, pred)
+        if new_assignee != r['assigned_to']:
+            conn.execute("UPDATE chore_instances SET assigned_to = ? WHERE id = ?",
+                         (new_assignee, r['id']))
+            updated += 1
+    if updated:
+        conn.commit()
+    return updated
+
+
 # ── Core generation ───────────────────────────────────────────────────────────
 
 def _compute_first_due(chore: dict, slot: dict) -> date:
@@ -269,6 +297,14 @@ def generate_all_for_chore(conn, chore: dict) -> list[dict]:
         inst = generate_for_slot(conn, chore, slot)
         if inst:
             results.append(inst)
+    # Self-heal: pending alternating assignees might be stale if multiple slots had
+    # their current cycles materialized in non-chronological order, or if a prior
+    # state change didn't trigger reassign_pending_alternating. Cheap when there's
+    # nothing to fix.
+    if reassign_pending_alternating(conn, chore['id']):
+        results = [dict(conn.execute(
+            "SELECT * FROM chore_instances WHERE id = ?", (r['id'],)
+        ).fetchone()) for r in results]
     return results
 
 
