@@ -145,6 +145,13 @@ export default function Stars() {
     }))
   }, [completions])
 
+  const categoryCounts = useMemo(() => {
+    if (!completions || colorMode !== 'category') return null
+    const m = {}
+    completions.forEach(c => { m[c.category] = (m[c.category] || 0) + 1 })
+    return Object.entries(m).sort((a, b) => b[1] - a[1])
+  }, [completions, colorMode])
+
   if (completions === null) {
     return <div className="page" style={{ color: 'var(--text-dim)', fontSize: 11 }}>loading...</div>
   }
@@ -158,13 +165,6 @@ export default function Stars() {
   function cycleMode() {
     setColorMode(m => MODE_ORDER[(MODE_ORDER.indexOf(m) + 1) % MODE_ORDER.length])
   }
-
-  const categoryCounts = useMemo(() => {
-    if (colorMode !== 'category') return null
-    const m = {}
-    completions.forEach(c => { m[c.category] = (m[c.category] || 0) + 1 })
-    return Object.entries(m).sort((a, b) => b[1] - a[1])
-  }, [completions, colorMode])
 
   return (
     <div className="stars-page">
