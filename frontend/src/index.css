@@ -749,6 +749,47 @@ body[data-light-level="0"] .sun-btn:hover {
 .stat-label { font-size: 12px; color: var(--text-dim); margin-bottom: 8px; font-style: italic; }
 .stat-value { font-size: 18px; color: var(--text); font-weight: 700; }
 
+/* ── Stars page ───────────────────────────────────────────────────────────── */
+.stars-page {
+  position: relative;
+  min-height: calc(100vh - 48px);
+  min-height: calc(100dvh - 48px);
+  background:
+    radial-gradient(ellipse at 30% 25%, #1f1448 0%, transparent 55%),
+    radial-gradient(ellipse at 75% 70%, #0d2447 0%, transparent 60%),
+    radial-gradient(ellipse at center, #0a0a1f 0%, #050510 80%, #020208 100%);
+  overflow: hidden;
+}
+.stars-toolbar {
+  position: absolute; top: 14px; left: 16px; right: 16px;
+  display: flex; justify-content: space-between; align-items: center;
+  z-index: 10; color: var(--text);
+  pointer-events: none;
+}
+.stars-toolbar > * { pointer-events: auto; }
+.stars-count {
+  background: rgba(0,0,0,0.35);
+  padding: 6px 12px; border-radius: 4px;
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+.stars-toggle {
+  display: flex; align-items: center; gap: 6px;
+  background: rgba(0,0,0,0.35);
+  padding: 6px 12px; border-radius: 4px;
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(255,255,255,0.08);
+  cursor: pointer; font-size: 11px; color: var(--text-dim);
+}
+.stars-sky {
+  position: absolute; inset: 0;
+}
+.stars-star {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
 /* ── History / Stats badges ───────────────────────────────────────────────── */
 .badge { font-size: 9px; padding: 2px 6px; border-radius: 3px; border: 1px solid; font-weight: 700; letter-spacing: 0.5px; }
 .badge.early { color: var(--alternating); border-color: var(--alternating); }

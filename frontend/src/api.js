@@ -42,6 +42,7 @@ export const api = {
 
   history: (limit = 50, offset = 0) =>
     req('GET', `/history?limit=${limit}&offset=${offset}`),
+  allCompletions: () => req('GET', '/history/all'),
 
   choreStats: (id) => req('GET', `/chores/${id}/stats`),
 

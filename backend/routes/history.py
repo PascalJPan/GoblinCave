@@ -5,6 +5,18 @@ from database import get_db
 router = APIRouter(prefix="/history", tags=["history"])
 
 
+@router.get("/all")
+def get_all(db=Depends(get_db), _=Depends(require_auth)):
+    rows = db.execute(
+        """
+        SELECT id, completed_by, completed_at, kind
+        FROM chore_instances WHERE status = 'done' AND completed_at IS NOT NULL
+        ORDER BY completed_at ASC
+        """
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 @router.get("")
 def get_history(
     limit: int = Query(50, le=200),

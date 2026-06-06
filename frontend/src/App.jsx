@@ -9,6 +9,7 @@ import ChoreForm from './components/ChoreForm'
 import ChoreEdit from './components/ChoreEdit'
 import History from './components/History'
 import Statistics from './components/Statistics'
+import Stars from './components/Stars'
 import './index.css'
 
 function Nav() {
@@ -26,6 +27,7 @@ function Nav() {
               <NavLink to="/chores" className={({ isActive }) => isActive ? 'active' : ''} onClick={() => setOpen(false)}>CHORES</NavLink>
               <NavLink to="/history" className={({ isActive }) => isActive ? 'active' : ''} onClick={() => setOpen(false)}>HISTORY</NavLink>
               <NavLink to="/stats" className={({ isActive }) => isActive ? 'active' : ''} onClick={() => setOpen(false)}>STATS</NavLink>
+              <NavLink to="/stars" className={({ isActive }) => isActive ? 'active' : ''} onClick={() => setOpen(false)}>STARS</NavLink>
             </div>
           </>
         )}
@@ -41,6 +43,7 @@ function Nav() {
         <NavLink to="/chores" className={({ isActive }) => isActive ? 'active' : ''}>Chores</NavLink>
         <NavLink to="/history" className={({ isActive }) => isActive ? 'active' : ''}>History</NavLink>
         <NavLink to="/stats" className={({ isActive }) => isActive ? 'active' : ''}>Stats</NavLink>
+        <NavLink to="/stars" className={({ isActive }) => isActive ? 'active' : ''}>Stars</NavLink>
       </div>
     </nav>
   )
@@ -63,6 +66,7 @@ export default function App() {
         <Route path="/chores/:id/edit" element={<ChoreEdit />} />
         <Route path="/history" element={<History />} />
         <Route path="/stats" element={<Statistics />} />
+        <Route path="/stars" element={<Stars />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </BrowserRouter>
