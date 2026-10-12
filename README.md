@@ -53,3 +53,13 @@ Person names are stored in the `config` table:
 INSERT INTO config (key, value) VALUES ('person1_name', 'Your Name');
 INSERT INTO config (key, value) VALUES ('person2_name', 'Their Name');
 ```
+
+## API for other apps
+
+Set `GOBLIN_API_TOKEN` in `backend/.env` to let another server call the API with
+`Authorization: Bearer <token>` (unset = cookie login only).
+
+- `GET /tasks/due?person=<person1|person2|name>&include_together=true&days_ahead=0`
+  — flat list of pending tasks due today or overdue, with `subtasks` (the bullet
+  lines of the description) and `notes`.
+- `POST /instances/{instance_id}/complete` with `{"completed_by": "person1"}` — tick one off.
