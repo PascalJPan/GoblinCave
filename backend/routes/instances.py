@@ -9,7 +9,7 @@ router = APIRouter(prefix="/instances", tags=["instances"])
 
 
 class CompleteBody(BaseModel):
-    completed_by: str  # 'pascal' | 'marina'
+    completed_by: str  # 'person1' | 'person2' | 'together'
 
 
 @router.post("/{instance_id}/complete")

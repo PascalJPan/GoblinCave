@@ -14,6 +14,7 @@ from routes.config import router as config_router
 from routes.instances import router as instances_router
 from routes.history import router as history_router
 from routes.dashboard import router as dashboard_router
+from routes.tasks import router as tasks_router
 
 _log_path = os.path.join(os.path.dirname(__file__), 'errors.log')
 logging.basicConfig(
@@ -45,6 +46,7 @@ app.include_router(config_router)
 app.include_router(instances_router)
 app.include_router(history_router)
 app.include_router(dashboard_router)
+app.include_router(tasks_router)
 
 
 @app.on_event("startup")
