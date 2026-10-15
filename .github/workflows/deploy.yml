@@ -1,0 +1,25 @@
+name: Deploy
+
+# Push to main → SSH into the VPS → deploy.sh (pull, sync backend, rebuild frontend,
+# restart, health check). The key in GOBLIN_DEPLOY_KEY is locked on the VPS to exactly
+# /root/goblin-cave/deploy.sh (forced command) — it cannot run anything else, so the
+# `script` below is only a label. Secrets: VPS_HOST, GOBLIN_DEPLOY_KEY.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency: deploy
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH (forced command → deploy.sh)
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: root
+          key: ${{ secrets.GOBLIN_DEPLOY_KEY }}
+          command_timeout: 10m
+          script: deploy

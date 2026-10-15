@@ -63,3 +63,13 @@ Set `GOBLIN_API_TOKEN` in `backend/.env` to let another server call the API with
   — flat list of pending tasks due today or overdue, with `subtasks` (the bullet
   lines of the description) and `notes`.
 - `POST /instances/{instance_id}/complete` with `{"completed_by": "person1"}` — tick one off.
+
+## Deploy
+
+**Automatic:** every push to `main` deploys (`.github/workflows/deploy.yml` → SSH → `deploy.sh` on the VPS).
+The Action's key may run nothing but `deploy.sh` (forced command in the VPS's `authorized_keys`).
+`deploy.sh` pulls `main`, syncs `backend/` into `/opt/backend/goblin-cave-backend` (never touching `.env`,
+the database, its backups, `.venv` or logs — one rolling `goblin_cave.db.bak-predeploy`), installs requirements,
+restarts `goblin-cave`, rebuilds the frontend into `/var/www/personal/GoblinCave/build`, and fails unless
+`/healthz` answers. By hand on the VPS: `bash /root/goblin-cave/deploy.sh` · log: `/var/log/goblin-cave-deploy.log`.
+
