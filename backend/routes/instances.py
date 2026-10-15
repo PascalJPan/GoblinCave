@@ -39,7 +39,11 @@ def complete_instance(
 
     chore = db.execute("SELECT * FROM chores WHERE id = ?", (row['chore_id'],)).fetchone()
     if chore and chore['is_active']:
-        generate_next_after_completion(db, dict(chore), row['slot_id'], dict(row))
+        # pass the completion along — `row` was read before the UPDATE, and without
+        # completed_at the next due date is counted from the old due date (an overdue
+        # chore ticked late would come back one cycle later, still overdue)
+        done = {**dict(row), 'status': 'done', 'completed_by': body.completed_by, 'completed_at': now}
+        generate_next_after_completion(db, dict(chore), row['slot_id'], done)
         reassign_pending_alternating(db, row['chore_id'])
 
     return {"ok": True, "completed_by": body.completed_by}
