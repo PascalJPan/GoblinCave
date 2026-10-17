@@ -9,6 +9,7 @@ from scheduler import (
     simulate_next_due,
     generate_next_after_completion,
     reassign_pending_alternating,
+    supersede_covered_pending,
     _prep_slots_for_chore,
     _compute_first_due,
     _next_due_strictly_after,
@@ -238,8 +239,9 @@ def _consume_next_as_early(db, chore_id: int, completed_by: str, completed_at_da
             "SELECT * FROM chore_instances WHERE id = ?", (existing['id'],)
         ).fetchone())
 
-    # Seed the next cycle if it's already due, then heal any other pending instances
-    # of the same chore whose assignee may now be stale.
+    # Skip other slots' already-due instances this covers, seed the next cycle if it's
+    # already due, then heal any other pending instances whose assignee may now be stale.
+    supersede_covered_pending(db, chore_id, inst_row['id'], ts)
     generate_next_after_completion(db, chore, chosen_slot['id'], inst_row)
     reassign_pending_alternating(db, chore_id)
     return inst_row

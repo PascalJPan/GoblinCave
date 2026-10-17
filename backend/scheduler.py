@@ -126,6 +126,7 @@ def _chore_alt_predecessor(conn, chore_id: int, before_due: date | None = None) 
         SELECT ci.* FROM chore_instances ci
         JOIN chore_slots cs ON ci.slot_id = cs.id
         WHERE cs.chore_id = ? AND cs.assignee = 'alternating' AND ci.kind != 'extra'
+          AND ci.status != 'skipped'
     """
     params: list = [chore_id]
     if before_due is not None:
@@ -171,6 +172,21 @@ def reassign_pending_alternating(conn, chore_id: int) -> int:
     if updated:
         conn.commit()
     return updated
+
+
+def supersede_covered_pending(conn, chore_id: int, done_id: int, completed_at: str) -> int:
+    """A completion covers the whole chore: other slots' pending instances that are already
+    due (missed cycles) are marked 'skipped' instead of staying overdue — otherwise ticking
+    one slot surfaces another slot's stale instance, often on the other person's list.
+    Stamped with the completion's completed_at so those slots resume strictly after it, and
+    so an uncomplete can restore exactly these rows. Returns how many rows were skipped."""
+    cur = conn.execute("""
+        UPDATE chore_instances SET status = 'skipped', completed_at = ?
+        WHERE chore_id = ? AND id != ? AND status = 'pending' AND kind != 'extra'
+          AND due_date <= ?
+    """, (completed_at, chore_id, done_id, date.today().isoformat()))
+    conn.commit()
+    return cur.rowcount
 
 
 # ── Core generation ───────────────────────────────────────────────────────────

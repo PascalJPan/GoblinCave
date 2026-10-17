@@ -3,7 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from auth import require_auth
 from database import get_db
-from scheduler import generate_next_after_completion, reassign_pending_alternating
+from scheduler import (generate_next_after_completion, reassign_pending_alternating,
+                       supersede_covered_pending)
 
 router = APIRouter(prefix="/instances", tags=["instances"])
 
@@ -43,6 +44,7 @@ def complete_instance(
         # completed_at the next due date is counted from the old due date (an overdue
         # chore ticked late would come back one cycle later, still overdue)
         done = {**dict(row), 'status': 'done', 'completed_by': body.completed_by, 'completed_at': now}
+        supersede_covered_pending(db, row['chore_id'], instance_id, now)
         generate_next_after_completion(db, dict(chore), row['slot_id'], done)
         reassign_pending_alternating(db, row['chore_id'])
 
@@ -63,6 +65,20 @@ def uncomplete_instance(instance_id: int, db=Depends(get_db), _=Depends(require_
         "DELETE FROM chore_instances WHERE slot_id = ? AND due_date > ? AND status = 'pending'",
         (row['slot_id'], row['due_date'])
     )
+    # restore the instances this completion superseded (matched by its completed_at stamp)
+    skipped = db.execute(
+        "SELECT id, slot_id, due_date FROM chore_instances "
+        "WHERE chore_id = ? AND status = 'skipped' AND completed_at = ?",
+        (row['chore_id'], row['completed_at'])
+    ).fetchall()
+    for s in skipped:
+        db.execute(
+            "DELETE FROM chore_instances WHERE slot_id = ? AND due_date > ? AND status = 'pending'",
+            (s['slot_id'], s['due_date'])
+        )
+        db.execute(
+            "UPDATE chore_instances SET status='pending', completed_at=NULL WHERE id=?", (s['id'],)
+        )
     db.execute(
         "UPDATE chore_instances SET status='pending', completed_by=NULL, completed_at=NULL WHERE id=?",
         (instance_id,)
